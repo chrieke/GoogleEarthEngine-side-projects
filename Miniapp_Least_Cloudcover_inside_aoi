@@ -1,0 +1,288 @@
+/**********************************************************************
+* Miniapp: AOI cloudcover L4/5/6/8
+* Calculate fmask cloudcover score inside an aoi.
+***********************************************************************/
+
+// Select timeframe & aoi
+var startdate = '2015-01-01'
+var enddate = '2016-01-01'
+var aoi = /* color: d63000 */ee.Geometry.Polygon(
+        [[[10.4644775390625, 51.17759467314004],
+          [10.43975830078125, 50.83887470777369],
+          [11.76910400390625, 50.840609151331336],
+          [11.7279052734375, 51.17759467314004]]]);
+
+// Display aoi.      
+print('aoi area', aoi.area(), 'sqm')
+var aoi_paint = (ee.Image().byte()).paint(aoi, 1, 3)
+Map.addLayer(aoi_paint, {palette: 'FF0000'}, 'aoi');
+Map.centerObject(aoi, 9);
+
+// Add Landsat data.
+var my_filter = function(collection){
+  return collection
+    .filterDate(startdate, enddate)
+    .filterBounds(aoi)
+}
+var LS4 = my_filter(ee.ImageCollection('LANDSAT/LT4_L1T_TOA_FMASK') //adjusted to L8 bands
+                      .select(['B1', 'B2', 'B3', 'B4', 'B5', 'B7', 'fmask'], ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'fmask']))
+var LS5 = my_filter(ee.ImageCollection('LANDSAT/LT5_L1T_TOA_FMASK') //adjusted to L8 bands
+                      .select(['B1', 'B2', 'B3', 'B4', 'B5', 'B7', 'fmask'], ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'fmask']))
+var LS7 = my_filter(ee.ImageCollection('LANDSAT/LE7_L1T_TOA_FMASK') //adjusted to L8 bands
+                      .select(['B1', 'B2', 'B3', 'B4', 'B5', 'B7', 'fmask'], ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'fmask']))
+var LS8 = my_filter(ee.ImageCollection('LANDSAT/LC8_L1T_TOA_FMASK')
+                      .select(['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'fmask']))
+
+var LS8754 = ee.ImageCollection((LS8).merge(LS7).merge(LS5))
+              .sort('system:time_start', true)
+print('LS8754', LS8754)
+var LS8754_fmask = LS8754.select('fmask');
+
+// Visualization parameter.
+var COLOR = {
+    CLEAR: '777777',  // grey
+    WATER: '0000FF',  // dark blue
+    SHADOW: '000000', // black
+    SNOW: '00FFFF',   // light blue
+    CLOUD: 'EEEEEE'   // white
+};
+var viz_fmask = {
+  bands:'fmask', min:0, max:4, 
+  palette:[COLOR.CLEAR, COLOR.WATER, COLOR.SHADOW, COLOR.SNOW, COLOR.CLOUD]
+};
+
+// Function to calculate values, display map and widget.
+var calcLayers = function(value) {
+  // Mosaic image0 (visualized) and aoi (painted, visualized) (both need forceRGBOutput!), then export mosaic.
+  var LS8754_0 = ee.Image(LS8754.toList({count: 1, offset: value}).get(0));
+  var layer1 = ui.Map.Layer(LS8754_0, {bands: ['B4', 'B3', 'B2'], gamma: [1.7, 1.7, 1.3]}, 'LS8754_0');
+  Map.layers().set(1, layer1);
+  var LS8754_0_visualize = LS8754_0.visualize({
+    bands: ['B4', 'B3', 'B2'],
+    gamma: [1.7, 1.7, 1.3], 
+    forceRgbOutput: true
+  });
+  var mosaicedImage = ee.ImageCollection.fromImages([
+    LS8754_0_visualize,
+    aoi_paint.visualize({palette: 'FF0000', forceRgbOutput: true})
+  ]).mosaic();
+  
+  // Download options: URL or Export.
+  print(mosaicedImage.getThumbURL({region: aoi.toGeoJSON(), dimensions:1000}));
+  
+  Export.image.toDrive({image: mosaicedImage,
+                        description: 'preview_LS8754_0',
+                        dimensions: 1000,
+                        region: aoi})
+
+
+  // Display fmask.
+  var LS8754_fmask0 = ee.Image(LS8754_fmask.toList({count: 1, offset: value}).get(0));
+  var layer2 = ui.Map.Layer(LS8754_fmask0, viz_fmask, 'LS8754_fmask0');
+  Map.layers().set(2, layer2);
+  
+  // Calculate cloudcover.
+  // - Handles Landsat 7 scanlines correctly.  > weniger Fläche als boundary geometry von overlap.
+  // - Uses area of pixelimage instead of image boundary feature to avoid projection issues.
+
+  // Calculate area of overlap aoi and image0.
+  var overlap_fmask0 = ee.Image(LS8754_fmask0)
+                    .clip(aoi)
+                    .remap([0,1,2,3,4], [1,1,1,1,1])
+  var layer3 = ui.Map.Layer(overlap_fmask0, {}, 'overlap area image 0 and aoi')
+  Map.layers().set(3, layer3);
+  var areaImage_overlap0 = ee.Image.pixelArea().mask(overlap_fmask0); //needs scale in the reducer.
+  var overlap0 = areaImage_overlap0.reduceRegion({
+        reducer: ee.Reducer.sum(),
+        geometry: aoi,
+        scale: 30,
+        maxPixels: 5e9
+        //bestEffort: bestEffort
+  });
+  overlap0 = overlap0.get('area')
+  //print('overlap0', overlap0)
+  
+  var overlap0_index = ee.Number(overlap0).divide(ee.Number(aoi.area())).multiply(100)
+  //print('overlap0_index', overlap0_index) 
+  
+  
+  // Calculate area of clouds in aoi for image0.
+  var cloudarea_fmask0 = LS8754_fmask0.mask(LS8754_fmask0.select('fmask').eq(4))
+  var layer4 = ui.Map.Layer(cloudarea_fmask0.clip(aoi), {palette: 'ff0000'}, 'fmask_clouds0');
+  Map.layers().set(4, layer4);
+  var areaImage_cloudarea0 = ee.Image.pixelArea().mask(cloudarea_fmask0); //needs scale in the reducer.
+  var cloudarea0 = areaImage_cloudarea0.reduceRegion({
+        reducer: ee.Reducer.sum(),
+        geometry: aoi,
+        scale: 30,
+        maxPixels: 5e9
+        //bestEffort: bestEffort
+  });
+  cloudarea0 = cloudarea0.get('area')
+  //print('cloudarea0', cloudarea0)
+      
+  var cloudarea0_index = ee.Number(cloudarea0).divide(overlap0).multiply(100)
+  //print('cloudarea0_index, 100=all clouds, 0=no clouds', cloudarea0_index) //100 = all clouds, 0=no clouds.
+  
+
+  ////////////////
+  
+  // Display results in widget.
+  LS8754_fmask.size().evaluate(function(result) {
+    slider.setMax(result-1)
+  })
+  
+  var acqdate = LS8754_fmask0.get('DATE_ACQUIRED');
+  acqdate.evaluate(function(result) {
+    // When the server returns the value, show it.
+    panel_results.widgets().set(0, ui.Label({ //set results label as cloudarea0_index
+      value: result,//wenn using result in widget: statt hier getInfo() evaluate.
+      style: {color: '#FF0000'}
+    }));
+  });
+  
+  var scene_id = LS8754_fmask0.get('LANDSAT_SCENE_ID');
+  scene_id.evaluate(function(result) {
+    panel_results.widgets().set(1, ui.Label({
+      value: result,
+      style: {color: '#FF0000'}
+    }));
+  });  
+  
+  // To bypass 'getinfo' when using a computed value in widget evaluate the value instead.  
+  // Request the value from the server.
+  overlap0.evaluate(function(result) {
+    panel_results.widgets().set(2, ui.Label({
+      value: 'overlap0: ' + result.toFixed(2) + ' sqm', 
+    }));
+  });
+  
+  overlap0_index.evaluate(function(result) {
+    panel_results.widgets().set(3, ui.Label({
+      value: 'overlap0_index: ' + result.toFixed(2) + ' %',
+    }));
+  });
+    
+  cloudarea0.evaluate(function(result) {
+    panel_results.widgets().set(4, ui.Label({
+      value: 'cloudarea0: ' + result.toFixed(2) + ' sqm',
+    }));
+  });
+    
+  cloudarea0_index.evaluate(function(result) {
+    panel_results.widgets().set(5, ui.Label({
+      value: 'cloudarea0_index: ' + result.toFixed(2) + ' %',
+    }));
+  });
+};
+
+
+
+/**********************************************************************
+*                 Panel & Interface                         
+***********************************************************************/
+
+// Panel 1: Image selection.
+var slider = ui.Slider({
+  min: 0,
+  max: 100, //um hier richtigen value zu setzen nicht getinfo oder evaluate hier, sondern setMax in evaluate in Funktion davor.
+  step: 1,
+  onChange: calcLayers,
+  style: {stretch: 'horizontal'}
+});
+
+
+// Create a panel that contains both the slider and the label.
+var panel_selection = ui.Panel({
+  widgets: [ui.Label('Choose image of collection (sorted by date):'), slider],
+  layout: ui.Panel.Layout.flow('vertical'),
+  style: {
+    position: 'top-right',
+    padding: '3px'
+  }
+});
+//Map.add(panel1);
+
+// Panel 2: Display results.
+var panel_results = ui.Panel({
+  widgets: [ui.Label(''), ui.Label(''), ui.Label('overlap0:'), ui.Label('overlap0_index'), ui.Label('cloudarea0:'), ui.Label('cloudarea0_index:')],
+  layout: ui.Panel.Layout.flow('vertical'),
+  style: {
+    position: 'top-right',
+    padding: '3px'
+  }
+});
+//Map.add(panel2);
+
+// Masterpanel
+var panel_master = ui.Panel({
+  widgets: [panel_selection, panel_results],
+  layout: ui.Panel.Layout.flow('vertical'),
+  style: {
+    height: '300px',
+    width: '380px',
+    margin: '+5px',
+    position: 'bottom-right',
+    padding: '3px',
+    fontSize: '14px'
+  }
+});
+Map.add(panel_master);
+
+// Set default values on the slider and map.
+slider.setValue(1);
+
+
+
+/**********************************************************************
+// *                 Legend                                
+// ***********************************************************************/
+
+// Create the panel for the legend items.
+var panel_legend = ui.Panel({
+  widgets: [ui.Label({
+              value: 'Image0 fmask Legend',
+                style: {
+                  fontWeight: 'bold',
+                  fontSize: '18px',
+                  margin: '0 0 4px 0',
+                  padding: '0'
+                }})],
+  style: {
+    position: 'bottom-left',
+    padding: '8px 15px'
+  }
+});
+
+// Helper function, creates and styles 1 row of the legend.
+var makeRow = function(color, name) {
+  // Create the label that is actually the colored box.
+  var colorBox = ui.Label({
+    style: {
+      backgroundColor: '#' + color,
+      // Use padding to give the box height and width.
+      padding: '8px',
+      margin: '0 0 4px 0'
+    }
+  });
+
+  // Create the label filled with the description text.
+  var description = ui.Label({
+    value: name,
+    style: {margin: '0 0 4px 6px'}
+  });
+
+  return ui.Panel({
+    widgets: [colorBox, description],
+    layout: ui.Panel.Layout.Flow('horizontal')
+  });
+};
+
+// Get the list of palette colors and class names from the image.
+panel_legend.add(makeRow('777777', 'CLEAR'));
+panel_legend.add(makeRow('0000FF', 'WATER'));
+panel_legend.add(makeRow('000000', 'SHADOW'));
+panel_legend.add(makeRow('00FFFF', 'SNOW'));
+panel_legend.add(makeRow('EEEEEE', 'CLOUD'));
+
+Map.add(panel_legend);
