@@ -1,10 +1,10 @@
 # GoogleEarthEngine-side-projects
 
-https://earthengine.google.com/
-Javascript Code Editor:
-https://code.earthengine.google.com/
-Python API:
-https://developers.google.com/earth-engine/python_install
+https://earthengine.google.com/  
+Javascript Code Editor:  
+https://code.earthengine.google.com/  
+Python API:  
+https://developers.google.com/earth-engine/python_install  
 
 
 **Miniapp_Least_Cloudcover_inside_aoi**
