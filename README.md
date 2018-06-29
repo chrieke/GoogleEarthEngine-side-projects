@@ -1,22 +1,19 @@
 # GoogleEarthEngine-side-projects
 
+Google Earth Engine is a cloud-based processing platform for earth observation and geospatial data. 
 https://earthengine.google.com/  
-Javascript Code Editor:  
-https://code.earthengine.google.com/  
-Python API:  
-https://developers.google.com/earth-engine/python_install  
 
 
-**Miniapp_Least_Cloudcover_inside_aoi**
+**Miniapp_least_cloudcover_in_roi**
 
+![](exampleimages/Miniapp_least_cloudcover_in_roi.png)
 
-![](exampleimages/Miniapp_Least_Cloudcover_inside_aoi.png)
 
 **Detect_areas_longterm_EVI_trends**
 
 ![](exampleimages/Detect_areas_longterm_EVI_trends.png)
 
 
-**US_DD_degree_growing_days**
+**US_annual_degree_growing_days**
 
-![](exampleimages/US_DD_degree_growing_days.png)
+![](exampleimages/US_annual_degree_growing_days.png)
